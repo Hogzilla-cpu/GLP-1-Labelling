@@ -1,8 +1,9 @@
-"""13C isotopomer model of brain metabolism from 13C-labeled glucose or acetate."""
+"""Two-compartment (neuron/astrocyte) 13C isotopomer model of brain metabolism."""
 
 from .fit import ActivityFit, PdhFit, fit_activity, fit_ldh, fit_pdh
 from .model import (
     ACETATE_TRACERS,
+    COMPARTMENTS,
     GLUCOSE_TRACERS,
     POOLS,
     Parameters,
@@ -23,6 +24,7 @@ from .noise import add_gaussian_noise
 __all__ = [
     "ACETATE_TRACERS",
     "ActivityFit",
+    "COMPARTMENTS",
     "GLUCOSE_TRACERS",
     "POOLS",
     "Parameters",

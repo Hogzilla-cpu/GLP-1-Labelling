@@ -1,23 +1,23 @@
-"""Metabolic model of cerebral 13C labeling from 13C-glucose and/or 13C-acetate.
+"""Two-compartment (neuron / astrocyte) 13C isotopomer model of brain metabolism.
 
-Pool structure follows Mason et al. (1992), J Cereb Blood Flow Metab
-12:434-447 (glucose -> pyruvate/lactate -> acetyl-CoA -> TCA cycle, with
-alpha-ketoglutarate/glutamate and oxaloacetate/aspartate exchange and a
-glutamine pool).  Unlike the original [1-13C]glucose analysis, every pool
-carries a full isotopomer distribution so multiply-labeled tracers such as
-[U-13C]glucose or [1,2-13C2]acetate and the resulting NMR multiplets are
-simulated exactly.
+Structure: the neuronal-astroglial model with the glutamate-glutamine cycle,
+as reviewed in Shen J (2013) "Modeling the glutamate-glutamine
+neurotransmitter cycle", Front Neuroenergetics 5:1 (doi:10.3389/fnene.2013.00001),
+built on the single-compartment pools of Mason et al. (1992) J Cereb Blood
+Flow Metab 12:434-447.  Every pool carries a full isotopomer distribution, so
+multiply labeled tracers ([U-13C]glucose, [1,2-13C2]acetate) and NMR
+multiplets are simulated exactly.
 
-Two enzyme activities are explicit inputs:
-
-* **PDH.**  Acetyl-CoA balance gives ``V_TCA = V_PDH + V_ac + V_dil`` where
-  V_ac is acetate oxidation and V_dil is unlabeled acetyl-CoA from other
-  substrates (fatty acids, ketone bodies...).  See :func:`with_pdh_activity`.
-* **LDH.**  Pyruvate and lactate are separate pools linked by LDH:
-  Pyr -> Lac at ``V_ldh + V_lac_net`` and Lac -> Pyr at ``V_ldh``, so
-  ``V_ldh`` is the exchange flux and ``V_lac_net`` the net lactate production
-  (negative = net lactate oxidation).  Lactate also exchanges with blood
-  (``V_mct_in`` influx, balancing efflux).  See :func:`with_ldh_activity`.
+Neuron (suffix _n)                     Astrocyte (suffix _g)
+  Pyr_n --PDH_n--> AcCoA_n               Pyr_g --PDH_g--> AcCoA_g <-- acetate (V_ac), V_dil_g
+  AcCoA_n + OAA_n -> aKG_n <-Vx_n-> Glu_n  Pyr_g --PC--> OAA_g
+  OAA_n <-Vx_n-> Asp_n                   AcCoA_g + OAA_g -> aKG_g <-Vx_g-> Glu_g
+                                         Glu_g --GS (V_cyc + V_pc)--> Gln
+Glutamate-glutamine cycle: Glu_n --V_cyc--> Glu_g,  Gln --V_cyc--> Glu_n.
+Anaplerosis is balanced by glutamine efflux (V_pc).  Glutamine may also
+exchange with an unlabeled source (V_gln_dil; glutamine isotopic dilution).
+Lactate is one tissue pool exchanging with each compartment's pyruvate
+through that compartment's LDH and with blood lactate (MCT).
 
 Units: pools in umol/g, fluxes in umol/g/min, time in minutes.
 """
@@ -42,15 +42,13 @@ from .isotopomers import (
 
 # Carbon counts of the tracked pools, in state-vector order.
 POOLS = {
-    "Pyr": 3,
-    "Lac": 3,
-    "AcCoA": 2,
-    "OAA": 4,
-    "aKG": 5,
-    "Glu": 5,
-    "Gln": 5,
-    "Asp": 4,
+    "Pyr_n": 3, "Pyr_g": 3, "Lac": 3,
+    "AcCoA_n": 2, "OAA_n": 4, "aKG_n": 5, "Glu_n": 5, "Asp_n": 4,
+    "AcCoA_g": 2, "OAA_g": 4, "aKG_g": 5, "Glu_g": 5, "Gln": 5,
 }
+# NMR sees total glutamate: the pool-weighted mix of Glu_n and Glu_g.
+COMBINED = {"Glu": ("Glu_n", "Glu_g")}
+CARBONS = {**POOLS, "Glu": 5}
 
 # --- Carbon transitions -----------------------------------------------------
 # Pyruvate/lactate: C1 carboxyl, C2 carbonyl/carbinol, C3 methyl (LDH keeps numbering).
@@ -74,6 +72,7 @@ GLUCOSE_TRACERS = {
     "1-13C": {(3,): 0.5, (): 0.5},
     "2-13C": {(2,): 0.5, (): 0.5},
     "6-13C": {(3,): 0.5, (): 0.5},
+    "1,6-13C": {(3,): 1.0},
 }
 # Acetyl-CoA isotopomers from each acetate tracer (acetate C1 carboxyl -> acetyl
 # C1 carbonyl, acetate C2 methyl -> acetyl C2 methyl).
@@ -88,39 +87,39 @@ ACETATE_TRACERS = {
 class Parameters:
     """Model parameters.
 
-    Defaults: V_PDH = 1.58 with V_ac = V_dil = 0 gives V_TCA = 1.58 umol/g/min,
-    the rat brain value reported by Mason et al. (1992).  All other defaults
-    are illustrative placeholders; set them from your own references.
+    Defaults are illustrative values of the magnitude reported for rat brain
+    in the two-compartment literature; they are not taken from Shen (2013).
+    Set them from your references.
     """
 
-    # Acetyl-CoA sources (umol/g/min); V_TCA = V_pdh + V_ac + V_dil
-    V_pdh: float = 1.58
-    V_ac: float = 0.0  # acetate oxidation (acetyl-CoA synthetase)
-    V_dil: float = 0.0  # other unlabeled acetyl-CoA entry
+    # Neuron (umol/g/min); V_TCA_n = V_pdh_n + V_dil_n
+    V_pdh_n: float = 0.9
+    V_dil_n: float = 0.0  # unlabeled neuronal acetyl-CoA entry
+    V_x_n: float = 57.0  # aKG_n <-> Glu_n and OAA_n <-> Asp_n exchange (placeholder)
+    V_ldh_n: float = 1.0  # neuronal LDH exchange (Lac -> Pyr_n)
+    V_lac_net_n: float = 0.0  # net neuronal lactate production (negative = uptake)
 
-    # Pyruvate / lactate (umol/g/min)
-    V_ldh: float = 1.0  # LDH exchange: Lac -> Pyr flux (Pyr -> Lac is V_ldh + V_lac_net)
-    V_lac_net: float = 0.05  # net lactate production (negative = net lactate use)
-    V_mct_in: float = 0.1  # blood lactate influx (efflux = V_mct_in + V_lac_net)
-
-    # TCA cycle and amino acids (umol/g/min)
-    V_pc: float = 0.0  # pyruvate carboxylase (anaplerosis, balanced by aKG efflux)
-    V_x: float = 57.0  # aKG <-> Glu exchange; placeholder, verify against Mason 1992
-    V_x_asp: float | None = None  # OAA <-> Asp exchange; None -> same as V_x
-    V_gln: float = 0.2  # Glu <-> Gln exchange (glutamine synthesis)
+    # Astrocyte (umol/g/min); V_TCA_g = V_pdh_g + V_ac + V_dil_g
+    V_pdh_g: float = 0.1
+    V_ac: float = 0.0  # acetate oxidation (astrocytic)
+    V_dil_g: float = 0.05  # unlabeled astroglial acetyl-CoA entry (astroglial dilution)
+    V_pc: float = 0.05  # pyruvate carboxylase, balanced by glutamine efflux
+    V_x_g: float = 57.0  # aKG_g <-> Glu_g exchange (placeholder)
+    V_ldh_g: float = 0.5  # astrocytic LDH exchange (Lac -> Pyr_g)
+    V_lac_net_g: float = 0.05  # net astrocytic lactate production
     pc_scrambling: float = 0.0  # fraction of PC-derived OAA equilibrated with fumarate
+
+    # Intercellular (umol/g/min)
+    V_cyc: float = 0.25  # glutamate-glutamine cycle
+    V_gln_dil: float = 0.0  # glutamine exchange with an unlabeled source
+    V_mct_in: float = 0.1  # blood lactate influx (efflux balances)
 
     # Pool sizes (umol/g)
     pools: dict[str, float] = field(
         default_factory=lambda: {
-            "Pyr": 0.1,
-            "Lac": 1.0,
-            "AcCoA": 0.02,
-            "OAA": 0.02,
-            "aKG": 0.2,
-            "Glu": 10.0,
-            "Gln": 4.0,
-            "Asp": 3.0,
+            "Pyr_n": 0.08, "Pyr_g": 0.02, "Lac": 1.0,
+            "AcCoA_n": 0.02, "OAA_n": 0.02, "aKG_n": 0.2, "Glu_n": 9.0, "Asp_n": 3.0,
+            "AcCoA_g": 0.005, "OAA_g": 0.005, "aKG_g": 0.05, "Glu_g": 1.0, "Gln": 4.0,
         }
     )
 
@@ -130,22 +129,34 @@ class Parameters:
     natural_abundance: float = 0.011
 
     @property
-    def V_tca(self) -> float:
-        return self.V_pdh + self.V_ac + self.V_dil
+    def V_tca_n(self) -> float:
+        return self.V_pdh_n + self.V_dil_n
 
     @property
-    def V_gly(self) -> float:
-        """Glucose-derived pyruvate production (2 x CMRglc)."""
-        return self.V_pdh + self.V_pc + self.V_lac_net
+    def V_tca_g(self) -> float:
+        return self.V_pdh_g + self.V_ac + self.V_dil_g
 
     @property
-    def V_ldh_fwd(self) -> float:
-        """Pyr -> Lac flux."""
-        return self.V_ldh + self.V_lac_net
+    def V_gs(self) -> float:
+        """Glutamine synthesis."""
+        return self.V_cyc + self.V_pc
+
+    @property
+    def V_gly_n(self) -> float:
+        return self.V_pdh_n + self.V_lac_net_n
+
+    @property
+    def V_gly_g(self) -> float:
+        return self.V_pdh_g + self.V_pc + self.V_lac_net_g
 
     @property
     def V_mct_out(self) -> float:
-        return self.V_mct_in + self.V_lac_net
+        return self.V_mct_in + self.V_lac_net_n + self.V_lac_net_g
+
+    def pool_size(self, name: str) -> float:
+        if name in COMBINED:
+            return sum(self.pools[p] for p in COMBINED[name])
+        return self.pools[name]
 
     def validate(self) -> None:
         if self.glucose_tracer is not None and self.glucose_tracer not in GLUCOSE_TRACERS:
@@ -154,16 +165,20 @@ class Parameters:
             raise ValueError(f"acetate_tracer must be None or one of {sorted(ACETATE_TRACERS)}")
         if self.acetate_tracer is not None and self.V_ac == 0:
             raise ValueError("acetate_tracer is set but V_ac = 0, so acetate would not be metabolised")
-        if self.V_pc > self.V_tca:
-            raise ValueError("V_pc cannot exceed V_TCA")
-        for name, value in [("V_gly", self.V_gly), ("V_ldh + V_lac_net", self.V_ldh_fwd),
-                            ("V_mct_in + V_lac_net", self.V_mct_out)]:
+        if self.V_pc > self.V_tca_g:
+            raise ValueError("V_pc cannot exceed V_TCA_g")
+        checks = [
+            ("V_gly_n", self.V_gly_n), ("V_gly_g", self.V_gly_g), ("V_mct_out", self.V_mct_out),
+            ("V_ldh_n + V_lac_net_n", self.V_ldh_n + self.V_lac_net_n),
+            ("V_ldh_g + V_lac_net_g", self.V_ldh_g + self.V_lac_net_g),
+        ]
+        for name, value in checks:
             if value < 0:
-                raise ValueError(f"{name} must be non-negative (check V_lac_net)")
+                raise ValueError(f"{name} must be non-negative (check V_lac_net_*)")
         if not 0 <= self.pc_scrambling <= 1:
             raise ValueError("pc_scrambling must be in [0, 1]")
         for name, flux in vars(self).items():
-            if name.startswith("V_") and name != "V_lac_net" and flux is not None and flux < 0:
+            if name.startswith("V_") and not name.startswith("V_lac_net") and flux < 0:
                 raise ValueError(f"{name} must be non-negative")
 
 
@@ -197,15 +212,16 @@ class _Rhs:
         p.validate()
         self.p = p
         na = p.natural_abundance
-        self.bg = {name: unlabeled(n, na) for name, n in POOLS.items()}
+        self.bg3, self.bg2, self.bg5 = unlabeled(3, na), unlabeled(2, na), unlabeled(5, na)
         self.co2 = unlabeled(1, na)
-        # (enrichment input, labeled pattern) per substrate; unlabeled tracers use zero input
         glc = GLUCOSE_TRACERS.get(p.glucose_tracer)
         ace = ACETATE_TRACERS.get(p.acetate_tracer)
-        self.glc = (glucose_fe if glc else _zero, _pattern(glc, 3) if glc else self.bg["Pyr"])
-        self.ace = (acetate_fe if ace else _zero, _pattern(ace, 2) if ace else self.bg["AcCoA"])
+        # (enrichment input, labeled pattern) per substrate; unlabeled tracers use zero input
+        self.glc = (glucose_fe if glc else _zero, _pattern(glc, 3) if glc else self.bg3)
+        self.ace = (acetate_fe if ace else _zero, _pattern(ace, 2) if ace else self.bg2)
         # blood lactate is labeled with the same pattern as glucose-derived lactate
         self.lac = (lactate_fe if glc else _zero, self.glc[1])
+        self.bg = {name: unlabeled(n, na) for name, n in POOLS.items()}
         sizes = np.array([2**n for n in POOLS.values()])
         ends = np.cumsum(sizes)
         self.slices = {name: slice(int(e - s), int(e)) for name, s, e in zip(POOLS, sizes, ends)}
@@ -213,35 +229,51 @@ class _Rhs:
     def initial_state(self) -> np.ndarray:
         return np.concatenate([self.bg[name] for name in POOLS])
 
-    def _input(self, source: tuple[Input, np.ndarray], bg: np.ndarray, t: float) -> np.ndarray:
+    @staticmethod
+    def _input(source: tuple[Input, np.ndarray], bg: np.ndarray, t: float) -> np.ndarray:
         fe_fn, labeled = source
         fe = fe_fn(t)
         return fe * labeled + (1 - fe) * bg
 
     def __call__(self, t: float, y: np.ndarray) -> np.ndarray:
-        p, bg = self.p, self.bg
+        p = self.p
         x = {name: y[sl] for name, sl in self.slices.items()}
-        V_tca, V_pc, V_x = p.V_tca, p.V_pc, p.V_x
-        V_xa = V_x if p.V_x_asp is None else p.V_x_asp
-        V_ogdh = V_tca - V_pc
+        glc = self._input(self.glc, self.bg3, t)
+        V_tca_n, V_tca_g, V_pc = p.V_tca_n, p.V_tca_g, p.V_pc
+        ldh_fwd_n = p.V_ldh_n + p.V_lac_net_n
+        ldh_fwd_g = p.V_ldh_g + p.V_lac_net_g
 
-        pc = _PC_FWD(x["Pyr"], self.co2)
+        pc = _PC_FWD(x["Pyr_g"], self.co2)
         if p.pc_scrambling:
-            pc = (1 - p.pc_scrambling) * pc + p.pc_scrambling * 0.5 * (pc + _PC_REV(x["Pyr"], self.co2))
+            pc = (1 - p.pc_scrambling) * pc + p.pc_scrambling * 0.5 * (pc + _PC_REV(x["Pyr_g"], self.co2))
+
+        def tca_return(akg: np.ndarray) -> np.ndarray:
+            return 0.5 * (_OGDH_FWD(akg) + _OGDH_REV(akg))
 
         d = {
-            "Pyr": p.V_gly * self._input(self.glc, bg["Pyr"], t) + p.V_ldh * x["Lac"]
-            - (p.V_pdh + V_pc + p.V_ldh_fwd) * x["Pyr"],
-            "Lac": p.V_ldh_fwd * x["Pyr"] + p.V_mct_in * self._input(self.lac, bg["Lac"], t)
-            - (p.V_ldh + p.V_mct_out) * x["Lac"],
-            "AcCoA": p.V_pdh * _PDH(x["Pyr"]) + p.V_ac * self._input(self.ace, bg["AcCoA"], t)
-            + p.V_dil * bg["AcCoA"] - V_tca * x["AcCoA"],
-            "OAA": V_ogdh * 0.5 * (_OGDH_FWD(x["aKG"]) + _OGDH_REV(x["aKG"]))
-            + V_pc * pc + V_xa * x["Asp"] - (V_tca + V_xa) * x["OAA"],
-            "aKG": V_tca * _CS(x["OAA"], x["AcCoA"]) + V_x * x["Glu"] - (V_tca + V_x) * x["aKG"],
-            "Glu": V_x * x["aKG"] + p.V_gln * x["Gln"] - (V_x + p.V_gln) * x["Glu"],
-            "Gln": p.V_gln * (x["Glu"] - x["Gln"]),
-            "Asp": V_xa * (x["OAA"] - x["Asp"]),
+            # glycolysis / LDH
+            "Pyr_n": p.V_gly_n * glc + p.V_ldh_n * x["Lac"] - (p.V_pdh_n + ldh_fwd_n) * x["Pyr_n"],
+            "Pyr_g": p.V_gly_g * glc + p.V_ldh_g * x["Lac"] - (p.V_pdh_g + V_pc + ldh_fwd_g) * x["Pyr_g"],
+            "Lac": ldh_fwd_n * x["Pyr_n"] + ldh_fwd_g * x["Pyr_g"]
+            + p.V_mct_in * self._input(self.lac, self.bg3, t)
+            - (p.V_ldh_n + p.V_ldh_g + p.V_mct_out) * x["Lac"],
+            # neuron
+            "AcCoA_n": p.V_pdh_n * _PDH(x["Pyr_n"]) + p.V_dil_n * self.bg2 - V_tca_n * x["AcCoA_n"],
+            "OAA_n": V_tca_n * tca_return(x["aKG_n"]) + p.V_x_n * x["Asp_n"] - (V_tca_n + p.V_x_n) * x["OAA_n"],
+            "aKG_n": V_tca_n * _CS(x["OAA_n"], x["AcCoA_n"]) + p.V_x_n * x["Glu_n"]
+            - (V_tca_n + p.V_x_n) * x["aKG_n"],
+            "Glu_n": p.V_x_n * x["aKG_n"] + p.V_cyc * x["Gln"] - (p.V_x_n + p.V_cyc) * x["Glu_n"],
+            "Asp_n": p.V_x_n * (x["OAA_n"] - x["Asp_n"]),
+            # astrocyte
+            "AcCoA_g": p.V_pdh_g * _PDH(x["Pyr_g"]) + p.V_ac * self._input(self.ace, self.bg2, t)
+            + p.V_dil_g * self.bg2 - V_tca_g * x["AcCoA_g"],
+            "OAA_g": (V_tca_g - V_pc) * tca_return(x["aKG_g"]) + V_pc * pc - V_tca_g * x["OAA_g"],
+            # aKG_g leaves via aKG dehydrogenase (V_tca_g - V_pc), net to Glu_g (V_pc) and exchange
+            "aKG_g": V_tca_g * _CS(x["OAA_g"], x["AcCoA_g"]) + p.V_x_g * x["Glu_g"]
+            - (V_tca_g + p.V_x_g) * x["aKG_g"],
+            "Glu_g": (p.V_x_g + V_pc) * x["aKG_g"] + p.V_cyc * x["Glu_n"] - (p.V_x_g + p.V_gs) * x["Glu_g"],
+            "Gln": p.V_gs * x["Glu_g"] + p.V_gln_dil * self.bg5
+            - (p.V_cyc + V_pc + p.V_gln_dil) * x["Gln"],
         }
         return np.concatenate([d[name] / p.pools[name] for name in POOLS])
 
@@ -249,15 +281,16 @@ class _Rhs:
 @dataclass
 class SimulationResult:
     t: np.ndarray
-    isotopomers: dict[str, np.ndarray]  # name -> (len(t), 2**n)
+    isotopomers: dict[str, np.ndarray]  # name -> (len(t), 2**n); includes combined "Glu"
     params: Parameters
 
     def enrichment(self, pool: str, carbon: int) -> np.ndarray:
         return fractional_enrichment(self.isotopomers[pool], carbon)
 
-    def observables(self, pools: Sequence[str] = ("Glu", "Gln", "Asp", "Lac")) -> pd.DataFrame:
+    def observables(self, pools: Sequence[str] = ("Glu", "Gln", "Glu_n", "Glu_g", "Asp_n", "Lac")) -> pd.DataFrame:
         """NMR-observable quantities as a wide table indexed by time.
 
+        ``Glu`` is total (neuronal + astrocytic) glutamate, as measured by NMR.
         For every carbon: ``{pool}_C{k}_FE`` (fractional enrichment) and
         ``{pool}_C{k}_conc`` (13C concentration, umol/g).  Multiplet fractions
         of each carbon's 13C signal: ``{pool}_C{k}_S``, ``_D{k-1}{k}``,
@@ -265,12 +298,12 @@ class SimulationResult:
         """
         cols: dict[str, np.ndarray] = {}
         for pool in pools:
-            n = POOLS[pool]
+            n = CARBONS[pool]
             x = self.isotopomers[pool]
             for k in range(1, n + 1):
                 fe = fractional_enrichment(x, k)
                 cols[f"{pool}_C{k}_FE"] = fe
-                cols[f"{pool}_C{k}_conc"] = fe * self.params.pools[pool]
+                cols[f"{pool}_C{k}_conc"] = fe * self.params.pool_size(pool)
                 m = multiplets(x, k, n)
                 cols[f"{pool}_C{k}_S"] = m["S"]
                 if k > 1:
@@ -305,18 +338,14 @@ def simulate(
         acetate_fe or exponential_enrichment(),
         lactate_fe or _zero,
     )
-    sol = solve_ivp(
-        rhs,
-        (0.0, float(t_eval[-1])),
-        rhs.initial_state(),
-        method="BDF",
-        t_eval=t_eval,
-        rtol=1e-7,
-        atol=1e-10,
-    )
+    sol = solve_ivp(rhs, (0.0, float(t_eval[-1])), rhs.initial_state(), method="BDF",
+                    t_eval=t_eval, rtol=1e-7, atol=1e-10)
     if not sol.success:
         raise RuntimeError(sol.message)
     iso = {name: sol.y[sl].T for name, sl in rhs.slices.items()}
+    for name, parts in COMBINED.items():
+        sizes = [params.pools[p] for p in parts]
+        iso[name] = sum(s * iso[p] for s, p in zip(sizes, parts)) / sum(sizes)
     return SimulationResult(sol.t, iso, params)
 
 
@@ -324,54 +353,68 @@ def simulate(
 
 PDH_MODES = ("compensated", "uncompensated")
 LDH_MODES = ("both", "exchange", "net")
+COMPARTMENTS = ("both", "neuron", "astrocyte")
+
+
+def _suffixes(compartment: str) -> list[str]:
+    try:
+        return {"both": ["n", "g"], "neuron": ["n"], "astrocyte": ["g"]}[compartment]
+    except KeyError:
+        raise ValueError(f"compartment must be one of {COMPARTMENTS}") from None
 
 
 def with_pdh_activity(base: Parameters, factor: float, mode: str = "compensated",
-                      compensate_with: str = "dil") -> Parameters:
-    """Scale PDH flux by ``factor``.
+                      compartment: str = "both", compensate_with: str = "dil") -> Parameters:
+    """Scale PDH flux by ``factor`` in ``compartment`` ("both", "neuron", "astrocyte").
 
-    ``compensated``: V_TCA held constant; the change in PDH flux is taken up
-    by ``compensate_with`` (``"dil"``: unlabeled substrates, or ``"acetate"``).
+    ``compensated``: each compartment's V_TCA held constant; the change in PDH
+    flux is taken up by unlabeled substrates (V_dil_n / V_dil_g) or, in
+    astrocytes with ``compensate_with="acetate"``, by acetate (V_ac).
     ``uncompensated``: other acetyl-CoA sources unchanged, so V_TCA follows PDH.
+    V_cyc and V_pc are unchanged in both modes.
     """
-    V_pdh = base.V_pdh * factor
-    if mode == "uncompensated":
-        return replace(base, V_pdh=V_pdh)
-    if mode != "compensated":
+    if mode not in PDH_MODES:
         raise ValueError(f"mode must be one of {PDH_MODES}")
-    delta = base.V_pdh - V_pdh
-    if compensate_with == "dil":
-        return replace(base, V_pdh=V_pdh, V_dil=base.V_dil + delta)
-    if compensate_with == "acetate":
-        return replace(base, V_pdh=V_pdh, V_ac=base.V_ac + delta)
-    raise ValueError("compensate_with must be 'dil' or 'acetate'")
+    if compensate_with not in ("dil", "acetate"):
+        raise ValueError("compensate_with must be 'dil' or 'acetate'")
+    changes: dict[str, float] = {}
+    for c in _suffixes(compartment):
+        old = getattr(base, f"V_pdh_{c}")
+        changes[f"V_pdh_{c}"] = old * factor
+        if mode == "compensated":
+            sink = "V_ac" if (c == "g" and compensate_with == "acetate") else f"V_dil_{c}"
+            changes[sink] = getattr(base, sink) + old * (1 - factor)
+    return replace(base, **changes)
 
 
-def with_ldh_activity(base: Parameters, factor: float, mode: str = "both") -> Parameters:
-    """Scale LDH activity by ``factor``.
+def with_ldh_activity(base: Parameters, factor: float, mode: str = "both",
+                      compartment: str = "both") -> Parameters:
+    """Scale LDH activity by ``factor`` in ``compartment``.
 
-    ``both``: forward (Pyr->Lac) and reverse (Lac->Pyr) fluxes both scale, as
-    for a change in enzyme amount at fixed metabolite levels; net lactate
-    production and hence glycolysis scale too.  ``exchange``: only the
-    Pyr<->Lac exchange scales, net lactate production fixed.  ``net``: only
-    net lactate production scales (glycolysis adjusts), exchange fixed.
-    Blood lactate exchange (``V_mct_in``) is unchanged in all modes.
+    ``both``: forward (Pyr->Lac) and reverse (Lac->Pyr) fluxes both scale (a
+    change in enzyme amount at fixed metabolite levels), so net lactate
+    production and glycolysis scale too.  ``exchange``: only the Pyr<->Lac
+    exchange scales.  ``net``: only net lactate production scales.  Blood
+    lactate exchange (``V_mct_in``) is unchanged.
     """
-    if mode == "both":
-        return replace(base, V_ldh=base.V_ldh * factor, V_lac_net=base.V_lac_net * factor)
-    if mode == "exchange":
-        return replace(base, V_ldh=base.V_ldh * factor)
-    if mode == "net":
-        return replace(base, V_lac_net=base.V_lac_net * factor)
-    raise ValueError(f"mode must be one of {LDH_MODES}")
+    if mode not in LDH_MODES:
+        raise ValueError(f"mode must be one of {LDH_MODES}")
+    changes: dict[str, float] = {}
+    for c in _suffixes(compartment):
+        if mode in ("both", "exchange"):
+            changes[f"V_ldh_{c}"] = getattr(base, f"V_ldh_{c}") * factor
+        if mode in ("both", "net"):
+            changes[f"V_lac_net_{c}"] = getattr(base, f"V_lac_net_{c}") * factor
+    return replace(base, **changes)
 
 
-def with_activity(base: Parameters, enzyme: str, factor: float, mode: str | None = None, **kwargs) -> Parameters:
+def with_activity(base: Parameters, enzyme: str, factor: float, mode: str | None = None,
+                  compartment: str = "both", **kwargs) -> Parameters:
     """Dispatch to :func:`with_pdh_activity` or :func:`with_ldh_activity`."""
     if enzyme == "pdh":
-        return with_pdh_activity(base, factor, mode or "compensated", **kwargs)
+        return with_pdh_activity(base, factor, mode or "compensated", compartment, **kwargs)
     if enzyme == "ldh":
-        return with_ldh_activity(base, factor, mode or "both")
+        return with_ldh_activity(base, factor, mode or "both", compartment)
     raise ValueError("enzyme must be 'pdh' or 'ldh'")
 
 
@@ -380,19 +423,21 @@ def activity_scan(
     enzyme: str,
     base: Parameters | None = None,
     mode: str | None = None,
+    compartment: str = "both",
     compensate_with: str = "dil",
     **simulate_kwargs,
 ) -> pd.DataFrame:
     """Simulate a series of enzyme activities; returns a long table with an
-    ``{enzyme}_factor`` column, the resulting key fluxes, and all
+    ``{enzyme}_factor`` column, the key fluxes, and all
     :meth:`SimulationResult.observables`."""
     base = base or Parameters()
     extra = {"compensate_with": compensate_with} if enzyme == "pdh" else {}
     frames = []
     for f in factors:
-        p = with_activity(base, enzyme, f, mode, **extra)
+        p = with_activity(base, enzyme, f, mode, compartment, **extra)
         df = simulate(p, **simulate_kwargs).observables().reset_index()
-        meta = {f"{enzyme}_factor": f, "V_pdh": p.V_pdh, "V_tca": p.V_tca, "V_ldh": p.V_ldh, "V_lac_net": p.V_lac_net}
+        meta = {f"{enzyme}_factor": f, "V_tca_n": p.V_tca_n, "V_tca_g": p.V_tca_g,
+                "V_pdh_n": p.V_pdh_n, "V_pdh_g": p.V_pdh_g, "V_ldh_n": p.V_ldh_n, "V_ldh_g": p.V_ldh_g}
         for i, (k, v) in enumerate(meta.items()):
             df.insert(i, k, v)
         frames.append(df)

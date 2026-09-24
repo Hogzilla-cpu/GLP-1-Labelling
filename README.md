@@ -1,189 +1,185 @@
-# c13model: ¹³C labeling from [U-¹³C]glucose or ¹³C-acetate vs. PDH and LDH activity
+# c13model: two-compartment ¹³C labeling of glutamate and glutamine vs. PDH and LDH activity
 
-A Python simulation of brain TCA-cycle ¹³C labeling during an infusion of **¹³C-glucose**
-and/or **¹³C-acetate**. You can vary two enzyme activities, separately:
+A Python simulation of ¹³C labeling in a **neuron + astrocyte** brain model during an infusion
+of **[U-¹³C]glucose** or **¹³C-acetate**. You can vary two enzyme activities, separately:
 * **pyruvate dehydrogenase (PDH)**;
 * **lactate dehydrogenase (LDH)**.
 
-Gaussian noise can be added to the output to make synthetic NMR data. Each activity can also
-be fitted back from noisy data.
+Each can be changed in neurons, astrocytes or both. Gaussian noise can be added to the output
+to make synthetic NMR data, and each activity can be fitted back from noisy data.
 
-The pool structure follows the model of
+## References
 
-> Mason GF, Rothman DL, Behar KL, Shulman RG. *NMR determination of the TCA cycle rate
-> and α-ketoglutarate/glutamate exchange rate in rat brain.* J Cereb Blood Flow Metab.
-> 1992;12(3):434-447. doi:[10.1038/jcbfm.1992.61](https://doi.org/10.1038/jcbfm.1992.61). PMID 1349022.
+* **Model structure (neuron/astrocyte, glutamate-glutamine cycle):** Shen J. *Modeling the
+  glutamate–glutamine neurotransmitter cycle.* Front Neuroenergetics. 2013;5:1.
+  doi:[10.3389/fnene.2013.00001](https://doi.org/10.3389/fnene.2013.00001)
+* **Original single-compartment model:** Mason GF, Rothman DL, Behar KL, Shulman RG. *NMR
+  determination of the TCA cycle rate and α-ketoglutarate/glutamate exchange rate in rat
+  brain.* J Cereb Blood Flow Metab. 1992;12(3):434-447.
+  doi:[10.1038/jcbfm.1992.61](https://doi.org/10.1038/jcbfm.1992.61)
 
-Mason et al. modeled [1-¹³C]glucose, which labels one carbon at a time. This model extends
-theirs to multiply-labeled tracers such as [U-¹³C]glucose or [1,2-¹³C₂]acetate. Each pool
-carries its **full isotopomer distribution** (all 2ⁿ labeling patterns), so it also gives the
-NMR **multiplets** (C4 singlet vs. C4-C5 doublet, and so on).
+> **Note:** the full text of Shen (2013) couldn't be retrieved from the build environment
+> (the network policy blocks the publisher and PubMed Central). The model below follows the
+> standard two-compartment formulation that paper reviews. **Check the flux definitions and
+> the parameter values against the paper before quantitative use.** Every default parameter is
+> an illustrative value and is not taken from the paper.
+
+Every pool carries its **full isotopomer distribution** (all 2ⁿ labeling patterns). Multiply
+labeled tracers and NMR multiplets (e.g. the C4–C5 doublet) are therefore simulated exactly.
 
 ## Model
 
 ```
- blood lactate ──V_mct_in──► Lac ◄───────────────────┐ LDH: Pyr→Lac = V_ldh + V_lac_net
-     (FE_lac(t))              │ ──V_mct_out──► blood  │      Lac→Pyr = V_ldh
-                              ▼                       │
- glucose (FE_glc(t)) ──V_gly──► Pyr ──────────────────┘
-                                 │ V_PDH
- acetate (FE_ac(t)) ──V_ac──► AcCoA ◄──V_dil── other unlabeled substrates
-                                 │  V_TCA = V_PDH + V_ac + V_dil
-          Pyr ──V_PC──► OAA ─────┴──► citrate ──► α-KG ◄──V_x──► Glu ◄──V_gln──► Gln
-                         ▲                          │
-              Asp ◄─V_x─►│◄── succinate/fumarate ◄──┘  (symmetric: label scrambles)
+                     glucose (FE_glc(t))                          blood lactate (FE_lac(t))
+                   V_gly_n │        │ V_gly_g                           │ V_mct_in
+                           ▼        ▼                                   ▼
+   NEURON           Pyr_n ◄──LDH_n──► Lac (tissue) ◄──LDH_g──► Pyr_g         ASTROCYTE
+                      │ V_pdh_n                                 │ V_pdh_g   │ V_pc
+  unlabeled ─V_dil_n─►AcCoA_n                  acetate ─V_ac─► AcCoA_g ◄─V_dil_g─ unlabeled
+                      │ V_TCA_n                                 │ V_TCA_g   │
+          Asp_n ◄Vx►OAA_n ─► aKG_n ◄─Vx_n─► Glu_n    Glu_g ◄─Vx_g─► aKG_g ◄─ OAA_g ◄┘
+                                               │  ▲ V_cyc    │ │ GS: V_cyc + V_pc
+                                               │  └──────────┼─┼──── Gln ──V_pc──► efflux
+                                               └──V_cyc──────┘ └────► Gln ◄─V_gln_dil─► unlabeled
 ```
 
-| Pool | Carbons | Default size (µmol/g) |
+| Neuron | Astrocyte | Intercellular |
 |---|---|---|
-| Pyruvate | 3 | 0.1 |
-| Lactate | 3 | 1.0 |
-| Acetyl-CoA | 2 | 0.02 |
-| OAA | 4 | 0.02 |
-| α-KG | 5 | 0.2 |
-| Glutamate | 5 | 10 |
-| Glutamine | 5 | 4 |
-| Aspartate | 4 | 3 |
+| V_TCA_n = V_pdh_n + V_dil_n | V_TCA_g = V_pdh_g + V_ac + V_dil_g | V_cyc: Glu_n → Glu_g and Gln → Glu_n |
+| V_x_n: aKG_n ⇄ Glu_n, OAA_n ⇄ Asp_n | V_x_g: aKG_g ⇄ Glu_g | glutamine synthesis V_GS = V_cyc + V_pc |
+| LDH_n: Pyr_n ⇄ Lac | V_pc: Pyr_g → OAA_g (balanced by glutamine efflux) | V_gln_dil: glutamine isotopic dilution |
+| | LDH_g: Pyr_g ⇄ Lac | V_mct_in: blood lactate exchange |
+
+Main modeling choices:
+* Acetate is taken up and oxidised only by astrocytes.
+* Pyruvate carboxylase is astrocytic.
+* Glutamine is an astrocytic pool.
+* NMR sees **total glutamate**. It is reported as `Glu`, the pool-weighted mix of `Glu_n` and
+  `Glu_g`. The compartments are also reported separately.
 
 Carbon transitions:
-* LDH keeps the carbon numbering of pyruvate and lactate.
 * PDH: acetyl C1 ← Pyr C2, acetyl C2 ← Pyr C3.
-* Acetate → acetyl-CoA: C1 ← acetate C1, C2 ← acetate C2.
-* Citrate synthase → IDH: α-KG C1..C5 ← OAA C4, C3, C2, acetyl C2, acetyl C1. OAA C1 is lost as CO₂.
-* α-KG dehydrogenase loses α-KG C1. The symmetric succinate step then maps it 50/50 back to OAA.
-* PC: OAA C1..C3 ← Pyr C1..C3, and OAA C4 ← CO₂. Fumarate back-scrambling is optional.
+* Acetate: acetyl C1 ← acetate C1, acetyl C2 ← acetate C2.
+* Citrate synthase → IDH: α-KG C1..C5 ← OAA C4, C3, C2, acetyl C2, acetyl C1.
+* α-KG dehydrogenase loses C1. Succinate is symmetric, so the label is scrambled 50/50 on the way back to OAA.
+* PC: OAA C1..C3 ← Pyr C1..C3, and OAA C4 ← CO₂.
 
-For each pool of size *P*, `P·dx/dt = Σ V_in·x_in − (Σ V_out)·x`. Here `x` is the isotopomer
-vector and every flux is at metabolic steady state. The equations are integrated with
+For each pool of size *P*, `P·dx/dt = Σ V_in·x_in − (Σ V_out)·x`, integrated with
 `scipy.solve_ivp` (BDF).
+
+| Pool | Default (µmol/g) | Pool | Default (µmol/g) |
+|---|---|---|---|
+| Pyr_n / Pyr_g | 0.08 / 0.02 | Glu_n / Glu_g | 9.0 / 1.0 |
+| Lac | 1.0 | Gln | 4.0 |
+| AcCoA_n / AcCoA_g | 0.02 / 0.005 | Asp_n | 3.0 |
+| OAA_n / OAA_g | 0.02 / 0.005 | aKG_n / aKG_g | 0.2 / 0.05 |
+
+Default fluxes (µmol/g/min, all illustrative):
+* **Neuron:** V_pdh_n 0.9; V_x_n 57 (unverified placeholder); V_ldh_n 1.0; V_lac_net_n 0.
+* **Astrocyte:** V_pdh_g 0.1; V_dil_g 0.05; V_pc 0.05; V_x_g 57; V_ldh_g 0.5; V_lac_net_g 0.05.
+* **Intercellular:** V_cyc 0.25; V_gln_dil 0; V_mct_in 0.1.
 
 ### Tracers
 
-* `Parameters(glucose_tracer=...)` accepts `"U-13C"` (default), `"1-13C"`, `"2-13C"`, `"6-13C"` or
-  `None`.
-* `Parameters(acetate_tracer=...)` accepts `"1-13C"`, `"2-13C"`, `"1,2-13C"` or `None` (default).
-  It needs `V_ac > 0`.
-* Both tracers can be set at once to simulate a co-infusion.
-* Enrichment inputs are passed to `simulate(...)`:
-  * `glucose_fe` and `acetate_fe` default to 0.7·(1−e^(−t/1 min)).
-  * `lactate_fe` (blood lactate) defaults to 0.
-  * Measured curves can be passed with `tabulated_enrichment(times, values)`.
+* `glucose_tracer` accepts `"U-13C"` (default), `"1-13C"`, `"1,6-13C"`, `"2-13C"`, `"6-13C"` or `None`.
+* `acetate_tracer` accepts `"1-13C"`, `"2-13C"`, `"1,2-13C"` or `None`. It needs `V_ac > 0`.
+* Enrichment inputs `glucose_fe`, `acetate_fe` and `lactate_fe` are passed to `simulate`:
+  * The glucose and acetate defaults are 0.7·(1−e^(−t/1 min)).
+  * Blood lactate defaults to 0.
+  * Measured curves can be passed with `tabulated_enrichment`.
 
-### PDH activity: `with_pdh_activity(base, factor, mode, compensate_with)`
+### PDH activity: `with_pdh_activity(base, factor, mode, compartment, compensate_with)`
 
-| mode | What changes |
-|---|---|
-| `compensated` | V_TCA stays fixed. The lost PDH flux is replaced by unlabeled substrates (`compensate_with="dil"`) or by acetate (`"acetate"`). |
-| `uncompensated` | Other acetyl-CoA sources stay fixed, so V_TCA falls along with PDH. |
+* `compartment`: `"both"` (default), `"neuron"` or `"astrocyte"`.
+* `mode="compensated"`: each compartment's V_TCA stays fixed. The lost PDH flux is replaced by
+  unlabeled substrate (V_dil), or in astrocytes by acetate (`compensate_with="acetate"`).
+* `mode="uncompensated"`: V_TCA falls along with PDH.
+* V_cyc and V_pc are unchanged in both modes.
 
-What this means for each tracer:
-* **Glucose:** the steady-state Glu C4 FE is FE_pyr · V_PDH/V_TCA.
-* **Acetate:** the steady-state Glu C4 FE is FE_ac · V_ac/V_TCA. Lowering PDH therefore
-  *raises* acetate-derived labeling when uncompensated, and leaves it unchanged when
-  compensated by unlabeled substrates.
+### LDH activity: `with_ldh_activity(base, factor, mode, compartment)`
 
-### LDH activity: `with_ldh_activity(base, factor, mode)`
-
-| mode | What changes |
-|---|---|
-| `both` (default) | The forward and reverse LDH fluxes both scale, as when the amount of enzyme changes at fixed metabolite levels. Net lactate production, and so glycolysis, scales too. |
-| `exchange` | Only the Pyr ⇄ Lac exchange (`V_ldh`) scales. |
-| `net` | Only net lactate production (`V_lac_net`) scales, and glycolysis adjusts to match. |
-
-LDH has two effects:
-* It sets how fast lactate labels.
-* Because lactate also exchanges with unlabeled blood lactate (`V_mct_in`), faster LDH exchange
-  dilutes pyruvate more. That slightly lowers glutamate labeling.
-
-With acetate as the only tracer, LDH has no effect: the model has no route from the TCA cycle
-back to pyruvate (see Limitations).
-
-## Parameters: check against your references
-
-| Parameter | Default | Source |
-|---|---|---|
-| `V_pdh` (+`V_ac`=`V_dil`=0 → V_TCA) | 1.58 µmol/g/min | Mason et al. 1992 (rat brain V_TCA) |
-| `V_x` (α-KG↔Glu) | 57 µmol/g/min | **Unverified placeholder.** I couldn't reach the full text; check it against the paper |
-| `V_ldh` 1.0, `V_lac_net` 0.05, `V_mct_in` 0.1 | µmol/g/min | Illustrative only |
-| `V_ac` (0; 0.15 in the acetate example), `V_gln`, `V_pc`, pool sizes | see `Parameters` | Illustrative only |
-| Precursor FE inputs | 0.7·(1−e^(−t/1 min)) | Illustrative; replace with measured values via `tabulated_enrichment` |
-| `natural_abundance` | 0.011 | ¹³C natural abundance |
+* `mode="both"`: forward and reverse LDH fluxes both scale, as when the amount of enzyme
+  changes. Net lactate production and glycolysis scale too.
+* `mode="exchange"`: only the Pyr ⇄ Lac exchange scales.
+* `mode="net"`: only net lactate production scales.
 
 ## Usage
 
 ```bash
 pip install -e .[test]
-pytest                                                   # run the tests
-python examples/scan.py                                  # [U-13C]glucose, PDH scan
-python examples/scan.py --enzyme ldh                     # [U-13C]glucose, LDH scan
-python examples/scan.py --substrate acetate              # [2-13C]acetate, PDH scan
-python examples/scan.py --substrate acetate --acetate-tracer 1,2-13C --mode compensated
-python examples/scan.py --enzyme ldh --mode exchange --noise-sd 0.03
+pytest
+python examples/scan.py                                  # [U-13C]glucose, PDH in both compartments
+python examples/scan.py --compartment astrocyte          # PDH changed in astrocytes only
+python examples/scan.py --enzyme ldh                     # [U-13C]glucose, LDH
+python examples/scan.py --enzyme ldh --fit-lactate       # ... also fit lactate C3
+python examples/scan.py --substrate acetate              # [2-13C]acetate, PDH
+python examples/scan.py --timepoint 30 --noise-sd 0.03
 ```
 
 ```python
-from dataclasses import replace
-from c13model import (Parameters, simulate, add_gaussian_noise, pdh_scan, ldh_scan,
-                      with_pdh_activity, with_ldh_activity, fit_pdh, fit_ldh)
+from c13model import Parameters, simulate, add_gaussian_noise, with_pdh_activity, with_ldh_activity, fit_pdh
 
-# [U-13C]glucose with PDH at 50 %
-obs = simulate(with_pdh_activity(Parameters(), 0.5)).observables()
-
-# [2-13C]acetate, glucose unlabeled
-ace = Parameters(glucose_tracer=None, acetate_tracer="2-13C", V_ac=0.15)
-obs = simulate(with_pdh_activity(ace, 0.5, "uncompensated")).observables()
-
-# LDH at 25 %
-obs = simulate(with_ldh_activity(Parameters(), 0.25)).observables()
-obs[["Lac_C3_FE", "Glu_C4_FE", "Glu_C4_D45"]]
-
-noisy = add_gaussian_noise(obs, sd=0.02, seed=1)                  # absolute SD, FE units
-noisy = add_gaussian_noise(obs, sd=0.05, relative=True)           # 5 % relative SD
-
-scan = ldh_scan([0.25, 0.5, 1, 2], mode="both")                   # long table, one block per factor
-fit = fit_ldh(noisy.reset_index(), ["Lac_C3_FE", "Glu_C4_FE"])    # fitted LDH factor ± SE
-fit.factor, fit.factor_se
+p = with_pdh_activity(Parameters(), 0.5, "compensated", compartment="astrocyte")
+obs = simulate(p, t_end=120).observables()
+obs[["Glu_C4_FE", "Gln_C4_FE", "Glu_n_C4_FE", "Glu_g_C4_FE", "Lac_C3_FE"]]
+noisy = add_gaussian_noise(obs, sd=0.02, seed=1)
+fit = fit_pdh(noisy.reset_index(), ["Glu_C4_FE", "Gln_C4_FE"], compartment="astrocyte")
 ```
 
-`observables()` gives the following for Glu, Gln, Asp and Lac at each carbon *k*:
+`observables()` gives the following for `Glu` (total), `Gln`, `Glu_n`, `Glu_g`, `Asp_n` and
+`Lac` at each carbon *k*:
 * `*_Ck_FE`: fractional enrichment.
 * `*_Ck_conc`: ¹³C concentration in µmol/g.
-* Multiplet fractions: `*_Ck_S`, `*_Ck_D{k-1}{k}`, `*_Ck_D{k}{k+1}` and `*_Ck_Q`. At Glu C3 the
-  two doublets overlap, and `Q` appears as a triplet.
+* Multiplet fractions: `*_Ck_S`, `*_Ck_D..` and `*_Ck_Q`.
 
 ### Example script outputs
 
-`examples/scan.py` simulates 4 activity levels and samples every 5 min with Gaussian noise. It
-then fits the activity back for each level, using all panels jointly (`fit_activity`, least
-squares with every other parameter fixed). It writes to
-`examples/output/{substrate}_{enzyme}_{mode}/`, with **one CSV per plot panel, named from the
-panel's y-axis label** (e.g. `Lac_C3_fractional_enrichment.csv`).
+`examples/scan.py` plots **glutamate and glutamine separately**, as `glutamate.png` and
+`glutamine.png`. Each figure has three panels:
+1. C4 fractional enrichment over time at 4 activity levels.
+2. C3 fractional enrichment over time at 4 activity levels.
+3. C4 fractional enrichment at `--timepoint` (default 60 min) **plotted against the activity**.
 
-| Scan | Panels (y-axis → CSV) |
-|---|---|
-| glucose + PDH | Glu C4 FE, Glu C3 FE, Glu C4 D45 fraction of C4 signal |
-| glucose + LDH | Lac C3 FE, Glu C4 FE, Glu C3 FE |
-| acetate + PDH | Glu C4 FE, Glu C3 FE, Gln C4 FE |
+Solid lines are the simulation, dots are simulation + Gaussian noise, and dashed lines / open
+diamonds are the fit. The activity is fitted once per level, jointly to all four time-course
+panels.
 
-Columns: `{enzyme}_factor, time_min, simulated, data, fit, fitted_{enzyme}_factor, fitted_{enzyme}_factor_se`.
-Curves are on a 0.5 min grid. `data` is filled only at the sampled (5 min) points and is empty
-everywhere else. Copies from the default runs (seed 0, SD 0.02) are in `docs/<scan>/`.
+**One CSV is written per plot panel, named from its y-axis label:**
 
-## Example output
+| y-axis label | CSV | Columns |
+|---|---|---|
+| Glu C4 fractional enrichment | `Glu_C4_fractional_enrichment.csv` | `{enzyme}_factor, time_min, simulated, data, fit, fitted_{enzyme}_factor, fitted_{enzyme}_factor_se` |
+| Glu C3 fractional enrichment | `Glu_C3_fractional_enrichment.csv` | same |
+| Glu C4 fractional enrichment at 60 min | `Glu_C4_fractional_enrichment_at_60_min.csv` | `{enzyme}_factor, simulated, data, fit, fitted_{enzyme}_factor, fitted_{enzyme}_factor_se` |
+| Gln C4 fractional enrichment | `Gln_C4_fractional_enrichment.csv` | as Glu |
+| Gln C3 fractional enrichment | `Gln_C3_fractional_enrichment.csv` | as Glu |
+| Gln C4 fractional enrichment at 60 min | `Gln_C4_fractional_enrichment_at_60_min.csv` | as Glu |
 
-Solid lines are the true simulation, dots are simulation + noise, and dashed lines are the fit.
+How the CSV cells are filled:
+* `data` is filled only at the sampled points (every 5 min, or the 4 levels in the activity panel).
+* `fit` is filled only where a fitted value exists.
 
-![glucose PDH compensated](docs/glucose_pdh_compensated/scan.png)
-![glucose PDH uncompensated](docs/glucose_pdh_uncompensated/scan.png)
-![glucose LDH](docs/glucose_ldh_both/scan.png)
-![acetate PDH](docs/acetate_pdh_uncompensated/scan.png)
+Outputs from the default runs (seed 0, noise SD 0.02) are in `docs/<substrate>_<enzyme>_<mode>_<compartment>/`.
 
-## Limitations / next steps
+## What the example runs show
 
-* **The model has one compartment.** In brain, acetate is taken up and oxidised mainly by
-  astrocytes, so it labels glutamine more than glutamate. Here Gln simply follows Glu. A
-  neuron/astrocyte model with a glutamate-glutamine cycle would be needed to capture this.
-* The model has no route from the TCA cycle back to pyruvate (malic enzyme/PEPCK), so acetate
-  label never reaches lactate.
-* Each fit estimates only one activity factor, with every other parameter fixed. LDH is hard
-  to pin down once it is fast, because lactate then already tracks pyruvate.
+* **PDH, glucose:** glutamate and glutamine C4 fall almost in proportion to PDH activity. Figures below are the change in C4 FE at 60 min as PDH drops from 1× to 0.25×:
+  * **Astrocytes only:** mostly moves glutamine (Gln −0.13, Glu −0.04).
+  * **Neurons only:** moves glutamate most (Glu −0.43). Glutamine still falls substantially
+    (−0.27), because neuronal glutamate feeds glutamine through the cycle. The fits recover the activity to about ±1–2 %.
+* **PDH, acetate:** acetate enters astrocytes, so glutamine labels faster and higher than
+  glutamate. Lowering PDH raises acetate labeling, because acetate then supplies a larger share
+  of acetyl-CoA.
+* **LDH, glucose:** LDH mostly sets lactate labeling. Glutamate and glutamine change by less than
+  0.02 FE over 0.1–4× LDH, because only the small blood-lactate dilution feeds through. With noise
+  SD 0.02, **LDH is not identifiable from glutamate/glutamine alone**; for example, the 1× level
+  fits as 1.6 ± 1.6. Adding lactate C3 (`--fit-lactate`) recovers it, for example 0.93 ± 0.09.
+  The activity panel's y-axis spans at least 0.2 FE, so the small effect isn't magnified.
+
+## Limitations
+
+* The equations and parameters have not been checked against the full text of Shen (2013).
+* The model has no GABAergic compartment, no neuronal glutamine pool and no route from the TCA
+  cycle back to pyruvate (malic enzyme/PEPCK). As a result, acetate label never reaches lactate,
+  and LDH has no effect on acetate-derived labeling.
+* Each fit estimates only one activity factor, with everything else fixed.

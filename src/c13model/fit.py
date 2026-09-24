@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import least_squares
 
-from .model import Parameters, simulate, with_activity
+from .model import Parameters, _suffixes, simulate, with_activity
 
 
 @dataclass
@@ -25,11 +25,16 @@ class ActivityFit:
 PdhFit = ActivityFit
 
 
-def _upper_bound(base: Parameters, enzyme: str, mode: str | None, compensate_with: str) -> float:
+def _upper_bound(base: Parameters, enzyme: str, mode: str | None, compartment: str,
+                 compensate_with: str) -> float:
     if enzyme == "pdh" and (mode or "compensated") == "compensated":
         # the compensating flux must stay non-negative
-        pool = base.V_dil if compensate_with == "dil" else base.V_ac
-        return (base.V_pdh + pool) / base.V_pdh
+        bounds = []
+        for c in _suffixes(compartment):
+            sink = "V_ac" if (c == "g" and compensate_with == "acetate") else f"V_dil_{c}"
+            pdh = getattr(base, f"V_pdh_{c}")
+            bounds.append((pdh + getattr(base, sink)) / pdh)
+        return min(bounds)
     return 10.0
 
 
@@ -39,6 +44,7 @@ def fit_activity(
     enzyme: str,
     base: Parameters | None = None,
     mode: str | None = None,
+    compartment: str = "both",
     compensate_with: str = "dil",
     initial_factor: float = 0.8,
     **simulate_kwargs,
@@ -52,16 +58,16 @@ def fit_activity(
     passed to :func:`simulate`.  Note that an activity is only identifiable
     from observables it affects: e.g. with unlabeled blood lactate and no
     lactate data, LDH mainly shifts glutamate labeling through pyruvate
-    dilution.
+    dilution.  ``compartment`` is "both", "neuron" or "astrocyte".
     """
     base = base or Parameters()
     extra = {"compensate_with": compensate_with} if enzyme == "pdh" else {}
     t = np.sort(data["time_min"].unique())
     obs = data.set_index("time_min").loc[t, list(columns)].to_numpy()
-    upper = _upper_bound(base, enzyme, mode, compensate_with)
+    upper = _upper_bound(base, enzyme, mode, compartment, compensate_with)
 
     def params_at(f: float) -> Parameters:
-        return with_activity(base, enzyme, f, mode, **extra)
+        return with_activity(base, enzyme, f, mode, compartment, **extra)
 
     def residuals(x: np.ndarray) -> np.ndarray:
         pred = simulate(params_at(float(x[0])), t_eval=t, **simulate_kwargs).observables()
