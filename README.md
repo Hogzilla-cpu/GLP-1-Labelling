@@ -161,6 +161,8 @@ How the CSV cells are filled:
 
 Outputs from the default runs (seed 0, noise SD 0.02) are in `docs/<substrate>_<enzyme>_<mode>_<compartment>/`.
 
+To plot the CSV files themselves, run `python examples/plot_csv.py <folder or csv> ...` (for example, `python examples/plot_csv.py docs/*/`). It writes one PNG next to each CSV, with the same name and the y-axis label taken from the filename. It also writes an `overview.png` per folder, with glutamate on the top row and glutamine on the bottom.
+
 ## What the example runs show
 
 * **PDH, glucose:** glutamate and glutamine C4 fall almost in proportion to PDH activity. Figures below are the change in C4 FE at 60 min as PDH drops from 1× to 0.25×:
