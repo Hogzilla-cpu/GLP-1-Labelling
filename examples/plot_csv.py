@@ -2,7 +2,7 @@
 
 Each CSV is plotted to a PNG of the same name next to it; the y-axis label is
 recovered from the file name.  Also writes overview.png per folder with all
-panels (glutamate top row, glutamine bottom row).
+panels (rows: glutamate, glutamine, lactate).
 
   python examples/plot_csv.py docs/glucose_pdh_compensated_both
   python examples/plot_csv.py docs/*/                 # every scan folder
@@ -86,12 +86,22 @@ def main() -> None:
             print(f"Wrote {csv.with_suffix('.png')}")
 
         if path.is_dir() and csvs:
-            rows = [[c for c in csvs if c.name.startswith(m)] for m in ("Glu", "Gln")]
-            rows = [sorted(r, key=lambda c: ("_at_" in c.name, "_C3_" in c.name)) for r in rows]
-            fig, axes = plt.subplots(2, 3, figsize=(16, 8.5), constrained_layout=True, squeeze=False)
+            rows = [[c for c in csvs if c.name.startswith(m)] for m in ("Glu", "Gln", "Lac")]
+            rows = [sorted(r, key=lambda c: ("_at_" in c.name, "_C3_" in c.name)) for r in rows if r]
+            fig, axes = plt.subplots(len(rows), 3, figsize=(16, 4.25 * len(rows)), constrained_layout=True,
+                                     squeeze=False)
             for r, row in enumerate(rows):
-                for c, csv in enumerate(row[:3]):
+                timecourses = [c for c in row if "_at_" not in c.name]
+                vs_activity = [c for c in row if "_at_" in c.name]
+                used = set()
+                for c, csv in enumerate(timecourses[:2]):
                     plot_csv(csv, axes[r][c])
+                    used.add(c)
+                for csv in vs_activity[:1]:  # activity panel always in the last column
+                    plot_csv(csv, axes[r][2])
+                    used.add(2)
+                for c in set(range(3)) - used:
+                    axes[r][c].set_visible(False)
             fig.suptitle(path.name.replace("_", " "), x=0.01, ha="left", fontsize=12)
             fig.savefig(path / "overview.png", dpi=120)
             plt.close(fig)

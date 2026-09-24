@@ -9,17 +9,18 @@ Run, for example:
   python examples/scan.py --substrate acetate                # [2-13C]acetate, PDH
 
 Writes to examples/output/{substrate}_{enzyme}_{mode}_{compartment}[_fit-lactate]/:
-  * glutamate.png and glutamine.png (plotted independently), each with
-      - C4 and C3 fractional enrichment time courses at 4 activity levels;
-      - C4 fractional enrichment at --timepoint vs. activity;
+  * glutamate.png, glutamine.png and lactate.png (plotted independently), each with
+      - fractional enrichment time courses at 4 activity levels (Glu/Gln C4 and C3,
+        Lac C3);
+      - C4 (Glu/Gln) or C3 (Lac) fractional enrichment at --timepoint vs. activity;
   * one CSV per plot panel, named from the panel's y-axis label:
       time-course panels: {enzyme}_factor, time_min, simulated, data, fit,
                           fitted_{enzyme}_factor, fitted_{enzyme}_factor_se
       activity panel:     {enzyme}_factor, simulated, data, fit,
                           fitted_{enzyme}_factor, fitted_{enzyme}_factor_se
     (``data``/``fit`` are empty where there is no sampled point/fitted level).
-The activity is fitted once per level, jointly to all time-course panels of
-both figures (optionally adding lactate C3 with --fit-lactate).
+The activity is fitted once per level, jointly to the glutamate and glutamine
+time-course panels (optionally adding lactate C3 with --fit-lactate).
 """
 
 import argparse
@@ -46,7 +47,12 @@ from c13model.fit import _upper_bound
 LEVELS = {"pdh": [0.25, 0.5, 0.75, 1.0], "ldh": [0.25, 0.5, 1.0, 2.0]}  # relative to baseline
 COLORS = ["#86b6ef", "#3987e5", "#1c5cab", "#0d366b"]  # light -> dark = low -> high activity
 INK, MUTED, GRID = "#2f2e2b", "#55544f", "#e5e4e0"
-METABOLITES = {"Glu": ("glutamate", "Glutamate (total)"), "Gln": ("glutamine", "Glutamine")}
+# name -> (figure file, title, time-course carbons); the first carbon is also plotted vs. activity
+METABOLITES = {
+    "Glu": ("glutamate", "Glutamate (total)", (4, 3)),
+    "Gln": ("glutamine", "Glutamine", (4, 3)),
+    "Lac": ("lactate", "Lactate", (3,)),
+}
 
 
 def filename_from_label(label: str) -> str:
@@ -95,12 +101,12 @@ def main() -> None:
     if tp not in sample_t or tp not in t_fine:
         sys.exit("--timepoint must be a multiple of 5 min between 0 and 120")
 
-    tc_cols = [f"{m}_C{k}_FE" for m in METABOLITES for k in (4, 3)]
-    fit_cols = tc_cols + (["Lac_C3_FE"] if args.fit_lactate else [])
+    tc_cols = [f"{m}_C{k}_FE" for m, (_, _, carbons) in METABOLITES.items() for k in carbons]
+    fit_cols = [c for c in tc_cols if not c.startswith("Lac")] + (["Lac_C3_FE"] if args.fit_lactate else [])
 
     # time courses at the 4 levels, noisy samples, and fits
     model = activity_scan(levels, enzyme, base, mode, compartment, t_eval=t_fine, **extra)
-    measured = add_gaussian_noise(model[model.time_min.isin(sample_t)], args.noise_sd, columns=fit_cols,
+    measured = add_gaussian_noise(model[model.time_min.isin(sample_t)], args.noise_sd, columns=tc_cols,
                                   seed=args.seed)
     fits, fitted = {}, []
     for f in levels:
@@ -126,12 +132,10 @@ def main() -> None:
     fitted_se = {f: r.factor_se for f, r in fits.items()}
     plt.rcParams.update({"font.size": 10, "axes.spines.top": False, "axes.spines.right": False})
 
-    for met, (fname, name) in METABOLITES.items():
-        panels = [
-            (f"{met}_C4_FE", f"{name} C4", f"{met} C4 fractional enrichment"),
-            (f"{met}_C3_FE", f"{name} C3", f"{met} C3 fractional enrichment"),
-        ]
-        fig, axes = plt.subplots(1, 3, figsize=(14, 4.2), constrained_layout=True)
+    for met, (fname, name, carbons) in METABOLITES.items():
+        panels = [(f"{met}_C{k}_FE", f"{name} C{k}", f"{met} C{k} fractional enrichment") for k in carbons]
+        n_ax = len(panels) + 1
+        fig, axes = plt.subplots(1, n_ax, figsize=(4.4 * n_ax + 0.8, 4.2), constrained_layout=True)
 
         for ax, (col, title, ylabel) in zip(axes, panels):
             table = (
@@ -154,9 +158,10 @@ def main() -> None:
             ax.set_ylabel(ylabel)
 
         # activity panel
-        col = f"{met}_C4_FE"
-        ylabel = f"{met} C4 fractional enrichment at {tp:g} min"
-        ax = axes[2]
+        k = carbons[0]
+        col = f"{met}_C{k}_FE"
+        ylabel = f"{met} C{k} fractional enrichment at {tp:g} min"
+        ax = axes[-1]
         at_tp = measured[measured.time_min == tp].set_index(fcol)[col]
         fit_tp = fitted[fitted.time_min == tp].set_index(fcol)[col]
         table = dose[[fcol, col]].rename(columns={col: "simulated"})
@@ -172,7 +177,7 @@ def main() -> None:
             ax.scatter(f, at_tp[f], s=30, color=color, edgecolor="white", linewidth=0.8, zorder=3)
             ax.scatter(fitted_factor[f], fit_tp[f], s=40, marker="D", facecolor="none", edgecolor=color,
                        linewidth=1.5, zorder=4)
-        ax.set_title(f"C4 at {tp:g} min vs. {E} activity", loc="left", fontsize=11)
+        ax.set_title(f"C{k} at {tp:g} min vs. {E} activity", loc="left", fontsize=11)
         ax.set_xlabel(f"{E} activity (× baseline)")
         ax.set_ylabel(ylabel)
         # keep at least a 0.2 FE span so negligible effects are not magnified

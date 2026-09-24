@@ -134,15 +134,21 @@ fit = fit_pdh(noisy.reset_index(), ["Glu_C4_FE", "Gln_C4_FE"], compartment="astr
 
 ### Example script outputs
 
-`examples/scan.py` plots **glutamate and glutamine separately**, as `glutamate.png` and
-`glutamine.png`. Each figure has three panels:
+`examples/scan.py` plots **glutamate, glutamine and lactate separately**, as `glutamate.png`,
+`glutamine.png` and `lactate.png`.
+
+The glutamate and glutamine figures each have three panels:
 1. C4 fractional enrichment over time at 4 activity levels.
 2. C3 fractional enrichment over time at 4 activity levels.
 3. C4 fractional enrichment at `--timepoint` (default 60 min) **plotted against the activity**.
 
+The lactate figure has two panels: C3 over time, and C3 at `--timepoint` plotted against the
+activity.
+
 Solid lines are the simulation, dots are simulation + Gaussian noise, and dashed lines / open
-diamonds are the fit. The activity is fitted once per level, jointly to all four time-course
-panels.
+diamonds are the fit. The activity is fitted once per level, jointly to the four glutamate and
+glutamine time-course panels. Lactate is included in the fit only with `--fit-lactate`; without
+it, the lactate panel shows how well the glutamate/glutamine-based fit predicts lactate.
 
 **One CSV is written per plot panel, named from its y-axis label:**
 
@@ -154,6 +160,8 @@ panels.
 | Gln C4 fractional enrichment | `Gln_C4_fractional_enrichment.csv` | as Glu |
 | Gln C3 fractional enrichment | `Gln_C3_fractional_enrichment.csv` | as Glu |
 | Gln C4 fractional enrichment at 60 min | `Gln_C4_fractional_enrichment_at_60_min.csv` | as Glu |
+| Lac C3 fractional enrichment | `Lac_C3_fractional_enrichment.csv` | as Glu |
+| Lac C3 fractional enrichment at 60 min | `Lac_C3_fractional_enrichment_at_60_min.csv` | as Glu |
 
 How the CSV cells are filled:
 * `data` is filled only at the sampled points (every 5 min, or the 4 levels in the activity panel).
@@ -161,7 +169,7 @@ How the CSV cells are filled:
 
 Outputs from the default runs (seed 0, noise SD 0.02) are in `docs/<substrate>_<enzyme>_<mode>_<compartment>/`.
 
-To plot the CSV files themselves, run `python examples/plot_csv.py <folder or csv> ...` (for example, `python examples/plot_csv.py docs/*/`). It writes one PNG next to each CSV, with the same name and the y-axis label taken from the filename. It also writes an `overview.png` per folder, with glutamate on the top row and glutamine on the bottom.
+To plot the CSV files themselves, run `python examples/plot_csv.py <folder or csv> ...` (for example, `python examples/plot_csv.py docs/*/`). It writes one PNG next to each CSV, with the same name and the y-axis label taken from the filename. It also writes an `overview.png` per folder, with one row each for glutamate, glutamine and lactate.
 
 ## What the example runs show
 
@@ -177,6 +185,13 @@ To plot the CSV files themselves, run `python examples/plot_csv.py <folder or cs
   SD 0.02, **LDH is not identifiable from glutamate/glutamine alone**; for example, the 1× level
   fits as 1.6 ± 1.6. Adding lactate C3 (`--fit-lactate`) recovers it, for example 0.93 ± 0.09.
   The activity panel's y-axis spans at least 0.2 FE, so the small effect isn't magnified.
+* **Lactate C3** (at 60 min, glucose):
+  * It rises with LDH activity: 0.52 at 0.25×, 0.61 at 1× and 0.63 at 2×. Faster exchange
+    brings lactate closer to pyruvate labeling.
+  * It also falls when PDH drops (0.61 → 0.53 at 0.25×). Less labeled glucose flows through
+    pyruvate, while the same amount of unlabeled blood lactate still arrives.
+  * With acetate as the tracer, lactate stays at natural abundance (0.011), because nothing
+    carries label from the TCA cycle back to pyruvate.
 
 ## Limitations
 
