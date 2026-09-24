@@ -38,7 +38,7 @@ def test_isotopomer_distributions_stay_normalised():
 
 
 def test_complete_labeling_without_dilution():
-    p = Parameters(natural_abundance=0.0, V_x=5.0)
+    p = Parameters(natural_abundance=0.0, V_x=5.0, V_mct_in=0.0)
     res = simulate(p, t_eval=[0, 2000], glucose_fe=lambda t: 1.0)
     assert res.isotopomers["Glu"][-1, index_of([1, 2, 3, 4, 5])] == pytest.approx(1.0, abs=1e-3)
 
@@ -46,7 +46,7 @@ def test_complete_labeling_without_dilution():
 @pytest.mark.parametrize("factor", [0.25, 0.5, 1.0])
 def test_steady_state_c4_enrichment_tracks_pdh_fraction(factor):
     # With V_TCA constant, steady-state Glu C4 FE = FE_pyr * V_PDH / V_TCA.
-    p = with_pdh_activity(Parameters(natural_abundance=0.0), factor, "compensated")
+    p = with_pdh_activity(Parameters(natural_abundance=0.0, V_mct_in=0.0), factor, "compensated")
     res = simulate(p, t_eval=[0, 3000], glucose_fe=lambda t: 0.6)
     assert res.enrichment("Glu", 4)[-1] == pytest.approx(0.6 * factor, abs=2e-3)
     assert p.V_tca == pytest.approx(1.58)
@@ -98,3 +98,83 @@ def test_fit_recovers_pdh_factor(mode, true):
     assert fit.success
     assert abs(fit.factor - true) < 3 * fit.factor_se + 0.02
     assert fit.residual_sd == pytest.approx(0.02, rel=0.3)
+
+
+# --- acetate ----------------------------------------------------------------
+
+def _acetate_params(tracer, **kw):
+    return Parameters(glucose_tracer=None, acetate_tracer=tracer, V_ac=0.3, natural_abundance=0.0, **kw)
+
+
+@pytest.mark.parametrize("tracer,carbon", [("2-13C", 4), ("1-13C", 5)])
+def test_acetate_labels_expected_glutamate_carbon_first(tracer, carbon):
+    obs = simulate(_acetate_params(tracer), t_eval=[0, 3]).observables()
+    other = 9 - carbon  # 4 <-> 5
+    assert obs[f"Glu_C{carbon}_FE"].iloc[-1] > 10 * obs[f"Glu_C{other}_FE"].iloc[-1]
+
+
+def test_acetate_steady_state_c4_enrichment():
+    p = _acetate_params("2-13C")
+    res = simulate(p, t_eval=[0, 3000], acetate_fe=lambda t: 0.8)
+    assert res.enrichment("Glu", 4)[-1] == pytest.approx(0.8 * p.V_ac / p.V_tca, abs=2e-3)
+    assert res.enrichment("Lac", 3)[-1] == pytest.approx(0.0, abs=1e-9)  # no PC/ME route back
+
+
+def test_doubly_labeled_acetate_gives_c4_c5_doublet():
+    obs = simulate(_acetate_params("1,2-13C"), t_eval=[0, 10]).observables()
+    assert obs["Glu_C4_D45"].iloc[-1] > 0.9
+
+
+def test_acetate_tracer_requires_acetate_flux():
+    with pytest.raises(ValueError):
+        simulate(Parameters(acetate_tracer="2-13C", V_ac=0.0))
+
+
+def test_pdh_compensated_by_acetate():
+    p = with_pdh_activity(Parameters(V_ac=0.2), 0.5, "compensated", compensate_with="acetate")
+    assert p.V_ac == pytest.approx(0.2 + 0.79) and p.V_tca == pytest.approx(1.78)
+
+
+# --- LDH --------------------------------------------------------------------
+
+@pytest.mark.parametrize("factor", [0.2, 1.0, 5.0])
+def test_ldh_steady_state_pyruvate_dilution(factor):
+    # Unlabeled blood lactate enters via LDH exchange; analytic steady state.
+    from c13model import with_ldh_activity
+
+    p = with_ldh_activity(Parameters(natural_abundance=0.0, V_mct_in=0.3), factor, "both")
+    F = 0.6
+    res = simulate(p, t_eval=[0, 3000], glucose_fe=lambda t: F)
+    lac_frac = p.V_ldh_fwd / (p.V_ldh + p.V_mct_out)
+    pyr = p.V_gly * F / (p.V_pdh + p.V_pc + p.V_ldh_fwd - p.V_ldh * lac_frac)
+    assert res.enrichment("Glu", 4)[-1] == pytest.approx(pyr * p.V_pdh / p.V_tca, abs=2e-3)
+
+
+def test_higher_ldh_increases_dilution_and_speeds_lactate_labeling():
+    from c13model import ldh_scan
+
+    df = ldh_scan([0.2, 5.0], t_eval=[0, 5, 3000])
+    early = df[df.time_min == 5].set_index("ldh_factor")
+    late = df[df.time_min == 3000].set_index("ldh_factor")
+    assert early.loc[5.0, "Lac_C3_FE"] > early.loc[0.2, "Lac_C3_FE"]
+    assert late.loc[5.0, "Glu_C4_FE"] < late.loc[0.2, "Glu_C4_FE"]
+
+
+def test_ldh_modes():
+    from c13model import with_ldh_activity
+
+    base = Parameters(V_ldh=1.0, V_lac_net=0.1)
+    assert with_ldh_activity(base, 2, "both").V_ldh_fwd == pytest.approx(2.2)
+    assert with_ldh_activity(base, 2, "exchange").V_lac_net == pytest.approx(0.1)
+    assert with_ldh_activity(base, 2, "net").V_gly == pytest.approx(base.V_gly + 0.1)
+
+
+def test_fit_recovers_ldh_factor():
+    from c13model import fit_ldh, with_ldh_activity
+
+    cols = ["Lac_C3_FE", "Glu_C4_FE"]
+    t = np.arange(0, 61, 2.0)
+    obs = simulate(with_ldh_activity(Parameters(), 0.3), t_eval=t).observables()
+    noisy = add_gaussian_noise(obs, 0.01, columns=cols, seed=5).reset_index()
+    fit = fit_ldh(noisy, cols)
+    assert fit.success and abs(fit.factor - 0.3) < 3 * fit.factor_se + 0.03
