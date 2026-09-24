@@ -68,12 +68,12 @@ Acetyl-CoA balance gives **V_TCA = V_PDH + V_dil**. You can change PDH activity 
 ```bash
 pip install -e .[test]
 pytest                                   # run the tests
-python examples/pdh_scan.py              # compensated scan → examples/output/*.csv, *.png
+python examples/pdh_scan.py              # compensated scan → examples/output/compensated/
 python examples/pdh_scan.py --mode uncompensated --noise-sd 0.03
 ```
 
 ```python
-from c13model import Parameters, simulate, pdh_scan, add_gaussian_noise, with_pdh_activity
+from c13model import Parameters, simulate, pdh_scan, add_gaussian_noise, with_pdh_activity, fit_pdh
 
 p = with_pdh_activity(Parameters(), 0.5, mode="compensated")   # PDH at 50 %
 obs = simulate(p, t_end=120).observables()                      # DataFrame indexed by time (min)
@@ -83,7 +83,28 @@ noisy = add_gaussian_noise(obs, sd=0.02, seed=1)                # absolute SD, F
 noisy = add_gaussian_noise(obs, sd=0.05, relative=True)         # 5 % relative SD
 
 scan = pdh_scan([0.25, 0.5, 0.75, 1.0], mode="uncompensated")    # long table, one block per factor
+
+fit = fit_pdh(noisy.reset_index(), ["Glu_C4_FE", "Glu_C3_FE"], mode="compensated")
+fit.factor, fit.factor_se                                        # fitted PDH activity ± SE
 ```
+
+### Example script outputs
+
+`examples/pdh_scan.py` simulates 4 PDH levels and samples every 5 min with Gaussian noise. It
+then fits the PDH factor back for each level, using all panels jointly (`fit_pdh`, least
+squares with every other parameter fixed). It writes **one CSV per plot panel, named from the
+panel's y-axis label**:
+
+| File | y-axis |
+|---|---|
+| `Glu_C4_fractional_enrichment.csv` | Glu C4 fractional enrichment |
+| `Glu_C3_fractional_enrichment.csv` | Glu C3 fractional enrichment |
+| `Glu_C4_D45_fraction_of_C4_signal.csv` | Glu C4 D45 fraction of C4 signal |
+
+Columns: `pdh_factor, time_min, simulated, data, fit, fitted_pdh_factor, fitted_pdh_factor_se`.
+Curves are on a 0.5 min grid. `data` is filled only at the sampled (5 min) points and is empty
+everywhere else. Copies from the default run (seed 0, SD 0.02) are in `docs/compensated/` and
+`docs/uncompensated/`.
 
 Output columns, for Glu, Gln and Asp at each carbon *k*:
 * `*_Ck_FE`: fractional enrichment.
@@ -96,11 +117,13 @@ Other tracers are also available through `Parameters(tracer=...)`: `"1-13C"`, `"
 
 ## Example output
 
-![compensated](docs/pdh_scan_compensated.png)
-![uncompensated](docs/pdh_scan_uncompensated.png)
+Solid lines are the true simulation, dots are simulation + noise, and dashed lines are the fit.
+
+![compensated](docs/compensated/pdh_scan.png)
+![uncompensated](docs/uncompensated/pdh_scan.png)
 
 ## Limitations / next steps
 
 * The model has one compartment. It does not split neurons from astrocytes or model the
   glutamate-glutamine cycle.
-* It is not yet fitted to data. Adding a least-squares fit wrapper would be straightforward.
+* The fit estimates only the PDH factor. Fitting V_x, V_gln or other parameters would need the same approach with more free parameters.

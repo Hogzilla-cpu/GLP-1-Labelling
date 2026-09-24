@@ -84,3 +84,17 @@ def test_noise_is_reproducible_and_unbiased():
     assert abs(resid.mean()) < 0.005 and resid.std() == pytest.approx(0.01, rel=0.3)
     # multiplet fractions untouched by default
     np.testing.assert_array_equal(a["Glu_C4_S"].to_numpy(), obs["Glu_C4_S"].to_numpy())
+
+
+@pytest.mark.parametrize("mode,true", [("compensated", 0.5), ("uncompensated", 0.3)])
+def test_fit_recovers_pdh_factor(mode, true):
+    from c13model import fit_pdh
+
+    cols = ["Glu_C4_FE", "Glu_C3_FE"]
+    t = np.arange(0, 121, 5.0)
+    obs = simulate(with_pdh_activity(Parameters(), true, mode), t_eval=t).observables()
+    noisy = add_gaussian_noise(obs, 0.02, columns=cols, seed=3).reset_index()
+    fit = fit_pdh(noisy, cols, mode=mode)
+    assert fit.success
+    assert abs(fit.factor - true) < 3 * fit.factor_se + 0.02
+    assert fit.residual_sd == pytest.approx(0.02, rel=0.3)
